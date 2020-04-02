@@ -20,6 +20,8 @@ This module implements the task specific estimator for Faster R-CNN v3 in PyTorc
 """
 import logging
 
+import numpy as np
+
 from art.estimators.pytorch import PyTorchEstimator
 from art.estimators.object_detection.object_detector import ObjectDetectorMixin
 
@@ -79,6 +81,9 @@ class PyTorchFasterRCNN(ObjectDetectorMixin, PyTorchEstimator):
             preprocessing=preprocessing,
         )
 
+        assert preprocessing is None, "This estimator does not support `preprocessing`."
+        assert postprocessing_defences is None, "This estimator does not support `postprocessing_defences`."
+
         if model is None:
             import torchvision
 
@@ -108,12 +113,12 @@ class PyTorchFasterRCNN(ObjectDetectorMixin, PyTorchEstimator):
         :rtype: `np.ndarray`
         """
         import torchvision
-        import numpy as np
+
+        self._model.train()
 
         # Apply preprocessing
         x, _ = self._apply_preprocessing(x, y=None, fit=False)
-
-        self._model.train()
+        x = x.astype(np.uint8)
 
         transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
@@ -124,22 +129,7 @@ class PyTorchFasterRCNN(ObjectDetectorMixin, PyTorchEstimator):
             img.requires_grad = True
             image_tensor_list.append(img)
 
-        if y is None:
-            predictions = self.predict(x=x)
-        else:
-            predictions = y
-
-        self._model.train()
-
-        targets = []
-
-        for i in range(len(image_tensor_list)):
-            d = {}
-            d["boxes"] = predictions[i]["boxes"]
-            d["labels"] = predictions[i]["labels"]
-            targets.append(d)
-
-        output = self._model(image_tensor_list, targets)
+        output = self._model(image_tensor_list, y)
 
         # Compute the gradient and return
         loss = None
@@ -153,7 +143,7 @@ class PyTorchFasterRCNN(ObjectDetectorMixin, PyTorchEstimator):
         self._model.zero_grad()
 
         # Compute gradients
-        loss.backward()
+        loss.backward(retain_graph=True)
 
         grad_list = list()
         for img in image_tensor_list:
@@ -191,6 +181,10 @@ class PyTorchFasterRCNN(ObjectDetectorMixin, PyTorchEstimator):
         import torchvision
 
         self._model.eval()
+
+        # Apply preprocessing
+        x, _ = self._apply_preprocessing(x, y=None, fit=False)
+        x = x.astype(np.uint8)
 
         transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
